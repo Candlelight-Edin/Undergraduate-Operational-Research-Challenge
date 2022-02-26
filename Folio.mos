@@ -1,0 +1,123 @@
+model folio
+uses "mmxprs", "mmquad"
+
+declarations
+   ShareIndices: set of integer
+   ShareName: array(ShareIndices) of string
+   Return: array(ShareIndices) of real
+   Variance: array(ShareIndices) of real
+   Covariance: array(ShareIndices, ShareIndices) of real
+   MaxFrac: real
+   Frac: array(ShareIndices) of mpvar
+   Buy: array(ShareIndices) of mpvar
+end-declarations
+
+initializations from "FolioQP.dat"
+   ShareIndices ShareName Return Variance Covariance
+   MaxFrac
+end-initializations
+
+ExcelOutput := true
+
+!
+!Define the total return, deviation and variance functions
+!
+TotalReturn     := sum(s in ShareIndices) Frac(s)*Return(s)
+TotalVariance   := sum(s in ShareIndices) Frac(s)*Variance(s)*Frac(s)
+TotalCovariance := sum(s, t in ShareIndices) Frac(s)*Covariance(s, t)*Frac(t)
+TotalRisk       := TotalVariance+TotalCovariance
+Eps := 1e-8
+RiskObjective := TotalRisk - Eps*TotalReturn
+
+!TotalNorthAmerican := sum(s in NorthAmerican) Frac(s)
+
+!
+!Define the constraints that are unchanged
+!
+TotalFracCS := sum(s in ShareIndices) Frac(s) = 1
+!NorthAmericanCS := TotalNorthAmerican >= MinNorthAmerican
+!
+!Add binary variables and constraints to restrict the number of shares
+!
+forall(s in ShareIndices) do
+	Buy(s) is_binary
+	Frac(s) <= Buy(s)
+	Frac(s) <= MaxFrac
+end-do
+
+if ExcelOutput then
+	fopen("FolioQP.csv", F_OUTPUT)
+end-if
+
+FmMaxNum := 0
+ToMaxNum := 15
+
+FmMinReturn := 0.008
+ToMinReturn := 0.017
+DlMinReturn := 0.001
+
+forward procedure report
+
+forall (MaxNum in FmMaxNum..ToMaxNum) do
+
+	writeln("Limiting number of share types bought to ", MaxNum)
+	if ExcelOutput then
+		write("Risk,Return")
+		forall(s in ShareIndices) write(",", ShareName(s))
+		writeln
+	end-if
+!
+!Limit the number of shares
+!
+	MaxNumCS := sum(s in ShareIndices) Buy(s) <= MaxNum
+!
+!Loop over minimum return values
+!
+	MinReturn := FmMinReturn
+	repeat
+!
+!Define the minimum return constraint whose RHS will change
+!
+		TotalReturnCS := TotalReturn >= MinReturn
+!
+!Minimze the total risk measure
+!
+		minimize(RiskObjective)
+!
+!Determine whether an optimal solution has been found
+!
+		if (getprobstat = XPRS_OPT) then
+!
+!Report the result
+!
+			report
+ 		else
+!
+!Report that there is no solution
+!
+			writeln("No solution for total return of at least ", strfmt(MinReturn, 3, 0))
+		end-if
+		MinReturn += DlMinReturn
+	until MinReturn > ToMinReturn
+end-do	!MaxNum in FmMaxNum..ToMaxNum
+
+procedure report
+if ExcelOutput then
+	write(getsol(TotalRisk), ",", getsol(TotalReturn))
+	forall(s in ShareIndices) write(",", getsol(Frac(s)))
+	writeln
+else
+	writeln
+	writeln("Solution: Risk ", strfmt(getsol(TotalRisk), 6, 2),
+				": Return ", strfmt(getsol(TotalReturn), 6, 2),
+				" >= ", strfmt(MinReturn, 3, 0))
+ 	writeln("Optimal portfolio:")
+ 	forall(s in ShareIndices)
+		writeln(strfmt(ShareName(s), 17), ": ", strfmt(100*getsol(Frac(s)), 6, 2), "%")
+
+ 	writeln
+end-if
+end-procedure
+end-model
+
+
